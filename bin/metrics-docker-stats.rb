@@ -67,6 +67,11 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
          default: '127.0.0.1:2375',
          proc: proc { |v|  v.gsub('tcp://', '').gsub('unix://', '') }
 
+  option :expression,
+         short: '-e CONTAINER',
+         long: '--expression CONTAINER',
+         default: ''
+
   option :docker_protocol,
          description: 'http or unix',
          short: '-p PROTOCOL',
@@ -154,7 +159,11 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
 
     @containers.each do |container|
       if config[:friendly_names]
-        list << container['Names'][0].gsub('/', '')
+        expression = config[:expression]
+        found = container['Names']
+        if found.to_s.include? expression
+          list << container['Names'][0].gsub('/', '')
+        end
       else
         list << container['Id']
       end
