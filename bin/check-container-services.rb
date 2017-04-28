@@ -57,7 +57,6 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
   option :compose,
          short: '-c COMPOSE_YAML_FILE',
          long: '--compose COMPOSE_YAML_FILE',
-         default: '',
          required: true
 
   def run
