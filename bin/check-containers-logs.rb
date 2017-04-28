@@ -27,7 +27,8 @@
 #   versions if you don't want to limit the timestamps of logs.
 #
 # LICENSE:
-#   Author: Nathan Newman  <newmannh@gmail.com>, Kel Cecil <kelcecil@praisechaos.com>
+#   Copyright 2017 Roberto Scudeller. Github @betorvs
+#   Fork from check-container-logs.rb but with some special needs
 #   Released under the same terms as Sensu (the MIT license); see LICENSE
 #   for details.
 #
@@ -174,21 +175,22 @@ insensitive',
     list = []
     path = 'containers/json'
     @containers = docker_api(path)
-
+    expression = config[:expression]
     @containers.each do |container|
       if config[:friendly_names]
-         expression = config[:expression]
          found = container['Names']
          if found.to_s.include? expression
            list << container['Names'][0].gsub('/', '')
-	 else
-           warning
         end
       else
         list << container['Id']
       end
     end
-    list
+    if list.empty?
+      warning "Not found: #{expression}"
+    else
+      list
+    end
   end
 
 

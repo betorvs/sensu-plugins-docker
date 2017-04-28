@@ -30,7 +30,8 @@
 #     => Other exception         -> WARNING
 #
 # LICENSE:
-#   Copyright 2014 Sonian, Inc. and contributors. <support@sensuapp.org>
+#   Copyright 2017 Roberto Scudeller. Github @betorvs
+#   Fork from check-container.rb but with some special needs
 #   Released under the same terms as Sensu (the MIT license); see LICENSE
 #   for details.
 #
@@ -121,20 +122,21 @@ class CheckContainersDocker < Sensu::Plugin::Check::CLI
     list = []
     path = 'containers/json'
     @containers = docker_api(path)
-
+    expression = config[:expression]
     @containers.each do |container|
       if config[:friendly_names]
-        expression = config[:expression]
         found = container['Names']
         if found.to_s.include? expression
           list << container['Names'][0].gsub('/', '')
-        else
-          warning "Not found: #{expression}"
         end
       else
         list << container['Id']
       end
     end
-    list
+    if list.empty?
+      warning "Not found: #{expression}"
+    else
+      list
+    end
   end
 end

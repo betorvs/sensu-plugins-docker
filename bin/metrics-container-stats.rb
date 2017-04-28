@@ -1,6 +1,6 @@
 #! /usr/bin/env ruby
 #
-#   metrics-docker-stats
+#   metrics-container-stats
 #
 # DESCRIPTION:
 #
@@ -19,20 +19,21 @@
 #
 # USAGE:
 #   Gather stats from all containers on a host using socket:
-#   metrics-docker-stats.rb -p unix -H /var/run/docker.sock
+#   metrics-container-stats.rb -p unix -H /var/run/docker.sock
 #
 #   Gather stats from all containers on a host using TCP:
-#   metrics-docker-stats.rb -p http -H localhost:2375
+#   metrics-container-stats.rb -p http -H localhost:2375
 #
 #   Gather stats from a specific container using socket:
-#   metrics-docker-stats.rb -p unix -H /var/run/docker.sock -c 5bf1b82382eb
+#   metrics-container-stats.rb -p unix -H /var/run/docker.sock -c 5bf1b82382eb
 #
-#   See metrics-docker-stats.rb --help for full usage flags
+#   See metrics-container-stats.rb --help for full usage flags
 #
 # NOTES:
 #
 # LICENSE:
-#   Copyright 2015 Paul Czarkowski. Github @paulczar
+#   Copyright 2017 Roberto Scudeller. Github @betorvs
+#   Fork from metrics-docker-stats.rb but with some special needs
 #   Released under the same terms as Sensu (the MIT license); see LICENSE
 #   for details.
 #
@@ -55,7 +56,7 @@ class Hash
   end
 end
 
-class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
+class MetricsContainerStats < Sensu::Plugin::Metric::CLI::Graphite
   option :scheme,
          description: 'Metric naming scheme, text to prepend to metric',
          short: '-s SCHEME',
@@ -72,7 +73,7 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
          description: 'Docker socket to connect. TCP: "host:port" or Unix: "/path/to/docker.sock" (default: "127.0.0.1:2375")',
          short: '-H DOCKER_HOST',
          long: '--docker-host DOCKER_HOST',
-         default: '127.0.0.1:2375'
+         default: '/var/run/docker.sock'
 
   option :expression,
          short: '-e CONTAINER',
@@ -83,7 +84,7 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
          description: 'http or unix',
          short: '-p PROTOCOL',
          long: '--protocol PROTOCOL',
-         default: 'http'
+         default: 'unix'
 
   option :friendly_names,
          description: 'use friendly name if available',
@@ -137,21 +138,22 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
     list = []
     path = 'containers/json'
     @containers = docker_api(path)
-
+    expression = config[:expression]
     @containers.each do |container|
       if config[:friendly_names]
-        expression = config[:expression]
         found = container['Names']
         if found.to_s.include? expression
           list << container['Names'][0].gsub('/', '')
-	else
-          warning
         end
       else
         list << container['Id']
       end
     end
-    list
+    if list.empty?
+      warning
+    else
+      list
+    end
   end
 
   def container_stats(container)
