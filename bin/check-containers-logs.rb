@@ -1,6 +1,6 @@
 #! /usr/bin/env ruby
 #
-#   check-container-logs
+#   check-containers-logs
 #
 # DESCRIPTION:
 #   Checks docker logs for specified strings
@@ -17,7 +17,7 @@
 #   gem: net_http_unix
 #
 # USAGE:
-#   check-container-logs.rb -H /tmp/docker.sock -n logspout -r 'problem sending' -r 'i/o timeout' -i 'Remark:' -i 'The configuration is'
+#   check-containers-logs.rb -H /tmp/docker.sock -n logspout -r 'problem sending' -r 'i/o timeout' -i 'Remark:' -i 'The configuration is'
 #   => 1 container running = OK
 #   => 4 container running = CRITICAL
 #
@@ -34,19 +34,20 @@
 
 require 'sensu-plugin/check/cli'
 require 'sensu-plugins-docker/client_helpers'
+require 'json'
 
-class ContainerLogChecker < Sensu::Plugin::Check::CLI
+class CheckContainersLogs < Sensu::Plugin::Check::CLI
   option :docker_host,
          description: 'Docker socket to connect. TCP: "host:port" or Unix: "/path/to/docker.sock" (default: "127.0.0.1:2375")',
          short: '-H DOCKER_HOST',
          long: '--docker-host DOCKER_HOST',
-         default: '127.0.0.1:2375'
+         default: '/var/run/docker.sock'
 
   option :container,
          description: 'name of container',
          short: '-n CONTAINER',
          long: '--container-name CONTAINER',
-         required: true
+         default: ''
 
   option :red_flags,
          description: 'substring whose presence (case-insensitive by default) in a log line indicates an error; can be used multiple t
@@ -82,6 +83,24 @@ insensitive',
          short: '-s SECONDS',
          long: '--seconds-ago SECONDS',
          required: false
+
+   option :expression,
+          short: '-e CONTAINER',
+          long: '--expression CONTAINER',
+          default: ''
+
+  option :docker_protocol,
+         description: 'http or unix',
+         short: '-p PROTOCOL',
+         long: '--protocol PROTOCOL',
+         default: 'unix'
+
+  option :friendly_names,
+         description: 'use friendly name if available',
+         short: '-N',
+         long: '--names',
+         boolean: true,
+         default: false
 
   def calculate_timestamp(seconds_ago = nil)
     seconds_ago = yield if block_given?
@@ -134,12 +153,57 @@ insensitive',
     nil
   end
 
-  def run
-    container = config[:container]
-    process_docker_logs(container) do |log_chunk|
-      problem = detect_problem log_chunk
-      critical "#{container} container logs indicate problem: '#{problem}'." unless problem.nil?
+  def docker_api(path)
+    if config[:docker_protocol] == 'unix'
+      session = NetX::HTTPUnix.new("unix://#{config[:docker_host]}")
+      request = Net::HTTP::Get.new "/#{path}"
+    else
+      uri = URI("#{config[:docker_protocol]}://#{config[:docker_host]}/#{path}")
+      session = Net::HTTP.new(uri.host, uri.port)
+      request = Net::HTTP::Get.new uri.request_uri
     end
-    ok "No errors detected from #{container} container logs."
+
+    session.start do |http|
+      http.request request do |response|
+        response.value
+        return JSON.parse(response.read_body)
+      end
+    end
+  end
+  def list_containers
+    list = []
+    path = 'containers/json'
+    @containers = docker_api(path)
+
+    @containers.each do |container|
+      if config[:friendly_names]
+         expression = config[:expression]
+         found = container['Names']
+         if found.to_s.include? expression
+           list << container['Names'][0].gsub('/', '')
+	 else
+           warning
+        end
+      else
+        list << container['Id']
+      end
+    end
+    list
+  end
+
+
+  def run
+    if config[:container] != ''
+      list = [config[:container]]
+    else
+      list = list_containers
+    end
+    list.each do |container|
+      process_docker_logs(container) do |log_chunk|
+        problem = detect_problem log_chunk
+        critical "#{container} container logs indicate problem: '#{problem}'." unless problem.nil?
+      end
+      ok "No errors detected from #{container} container logs."
+    end
   end
 end

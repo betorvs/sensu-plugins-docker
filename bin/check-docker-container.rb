@@ -1,10 +1,9 @@
 #! /usr/bin/env ruby
 #
-#   check-container
+#   check-docker-container
 #
 # DESCRIPTION:
-#   This is a simple check script for Sensu to check that a Docker container is
-#   running. You can pass in either a container id or a container name.
+# This is a simple check script for Sensu to check the number of a Docker Container
 #
 # OUTPUT:
 #   plain text
@@ -14,23 +13,17 @@
 #
 # DEPENDENCIES:
 #   gem: sensu-plugin
+#   gem: net_http_unix
 #
 # USAGE:
-#   check-docker-container.rb c92d402a5d14
-#   CheckDockerContainer OK
-#
-#   check-docker-container.rb circle_burglar
-#   CheckDockerContainer CRITICAL: circle_burglar is not running on the host
+#   check-docker-container.rb -w 3 -c 3
+#   => 1 container running = OK.
+#   => 4 container running = CRITICAL
 #
 # NOTES:
-#     => State.running == true   -> OK
-#     => State.running == false  -> CRITICAL
-#     => Not Found               -> CRITICAL
-#     => Can't connect to Docker -> WARNING
-#     => Other exception         -> WARNING
 #
 # LICENSE:
-#   Copyright 2014 Sonian, Inc. and contributors. <support@sensuapp.org>
+#   Author Yohei Kawahara  <inokara@gmail.com>
 #   Released under the same terms as Sensu (the MIT license); see LICENSE
 #   for details.
 #
@@ -38,101 +31,80 @@
 require 'sensu-plugin/check/cli'
 require 'sensu-plugins-docker/client_helpers'
 require 'json'
-
 #
-# Check Docker Container
+# Check Docker Containers
 #
-class CheckDockerContainer < Sensu::Plugin::Check::CLI
+class CheckDockerContainers < Sensu::Plugin::Check::CLI
   option :docker_host,
-         short: '-h DOCKER_HOST',
+         short: '-h docker_host',
          long: '--host DOCKER_HOST',
          description: 'Docker socket to connect. TCP: "host:port" or Unix: "/path/to/docker.sock" (default: "127.0.0.1:2375")',
          default: '127.0.0.1:2375'
-  option :container,
-         short: '-c CONTAINER',
-         long: '--container CONTAINER',
-         default: ''
-  option :expression,
-         short: '-e CONTAINER',
-         long: '--expression CONTAINER',
-         default: ''
-  option :docker_protocol,
-         description: 'http or unix',
-         short: '-p PROTOCOL',
-         long: '--protocol PROTOCOL',
-         default: 'http'
-  option :friendly_names,
-         description: 'use friendly name if available',
-         short: '-n',
-         long: '--names',
-         boolean: true,
-         default: false
+
+  option :warn_over,
+         short: '-W N',
+         long: '--warn-over N',
+         description: 'Trigger a warning if over a number',
+         proc: proc(&:to_i)
+
+  option :crit_over,
+         short: '-C N',
+         long: '--critical-over N',
+         description: 'Trigger a critical if over a number',
+         proc: proc(&:to_i)
+
+  option :warn_under,
+         short: '-w N',
+         long: '--warn-under N',
+         description: 'Trigger a warning if under a number',
+         proc: proc(&:to_i),
+         default: 1
+
+  option :crit_under,
+         short: '-c N',
+         long: '--critical-under N',
+         description: 'Trigger a critical if under a number',
+         proc: proc(&:to_i),
+         default: 1
+
+  def under_message(crit_under, count)
+    "Less than #{crit_under} containers running. #{count} running."
+  end
+
+  def over_message(crit_over, count)
+    "More than #{crit_over} containers running. #{count} running."
+  end
+
+  def evaluate_count(count)
+    # #YELLOW
+    if config.key?(:crit_under) && count < config[:crit_under]
+      critical under_message(config[:crit_under], count)
+    # #YELLOW
+    elsif config.key?(:crit_over) && count > config[:crit_over]
+      critical over_message(config[:crit_over], count)
+    # #YELLOW
+    elsif config.key?(:warn_under) && count < config[:warn_under]
+      warning under_message(config[:warn_under], count)
+    # #YELLOW
+    elsif config.key?(:warn_over) && count > config[:warn_over]
+      warning over_message(config[:warn_over], count)
+    else
+      ok
+    end
+  end
 
   def run
     client = create_docker_client
-    if config[:container] != ''
-      list = [config[:container]]
-    else
-      list = list_containers
+    path = '/containers/json'
+    req = Net::HTTP::Get.new path
+    begin
+      response = client.request(req)
+      containers = JSON.parse(response.body)
+      evaluate_count containers.size
+    rescue JSON::ParserError => e
+      critical "JSON Error: #{e.inspect}"
+    rescue => e
+      warning "Error: #{e.inspect}"
     end
-    list.each do |container|
-      path = "/containers/#{container}/json"
-      req = Net::HTTP::Get.new path
-      begin
-        response = client.request(req)
-        if response.body.include? 'no such id'
-          #critical "#{config[:container]} is not running on #{config[:docker_host]}"
-          critical "#{container} is not running on #{config[:docker_host]}"
-        end
-  
-        container_state = JSON.parse(response.body)['State']['Running']
-        if container_state == true
-          #ok "#{config[:container]} is running on #{config[:docker_host]}."
-          ok "#{container} is running on #{config[:docker_host]}."
-        else
-          #critical "#{config[:container]} is #{container_state} on #{config[:docker_host]}."
-          critical "#{container} is #{container_state} on #{config[:docker_host]}."
-        end
-      rescue JSON::ParserError => e
-        critical "JSON Error: #{e.inspect}"
-      rescue => e
-        warning "Error: #{e.inspect}"
-      end
-    end
-  end
-  def docker_api(path)
-    if config[:docker_protocol] == 'unix'
-      session = NetX::HTTPUnix.new("unix://#{config[:docker_host]}")
-      request = Net::HTTP::Get.new "/#{path}"
-    else
-      uri = URI("#{config[:docker_protocol]}://#{config[:docker_host]}/#{path}")
-      session = Net::HTTP.new(uri.host, uri.port)
-      request = Net::HTTP::Get.new uri.request_uri
-    end
-
-    session.start do |http|
-      http.request request do |response|
-        response.value
-        return JSON.parse(response.read_body)
-      end
-    end
-  end
-  def list_containers
-    list = []
-    path = 'containers/json'
-    @containers = docker_api(path)
-
-    @containers.each do |container|
-      if config[:friendly_names]
-        expression = config[:expression]
-        found = container['Names']
-        if found.to_s.include? expression
-          list << container['Names'][0].gsub('/', '')
-        end
-      else
-        list << container['Id']
-      end
-    end
-    list
   end
 end

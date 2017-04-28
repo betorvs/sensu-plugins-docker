@@ -74,6 +74,11 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
          long: '--docker-host DOCKER_HOST',
          default: '127.0.0.1:2375'
 
+  option :expression,
+         short: '-e CONTAINER',
+         long: '--expression CONTAINER',
+         default: ''
+
   option :docker_protocol,
          description: 'http or unix',
          short: '-p PROTOCOL',
@@ -90,11 +95,11 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
   def run
     @timestamp = Time.now.to_i
 
-    list = if config[:container] != ''
-             [config[:container]]
-           else
-             list_containers
-           end
+    if config[:container] != ''
+      list = [config[:container]]
+    else
+      list = list_containers
+    end
     list.each do |container|
       stats = container_stats(container)
       output_stats(container, stats)
@@ -120,7 +125,6 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
       session = Net::HTTP.new(uri.host, uri.port)
       request = Net::HTTP::Get.new uri.request_uri
     end
-
     session.start do |http|
       http.request request do |response|
         response.value
@@ -135,11 +139,17 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
     @containers = docker_api(path)
 
     @containers.each do |container|
-      list << if config[:friendly_names]
-                container['Names'][0].delete('/')
-              else
-                container['Id']
-              end
+      if config[:friendly_names]
+        expression = config[:expression]
+        found = container['Names']
+        if found.to_s.include? expression
+          list << container['Names'][0].gsub('/', '')
+	else
+          warning
+        end
+      else
+        list << container['Id']
+      end
     end
     list
   end
