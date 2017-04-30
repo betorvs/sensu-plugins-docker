@@ -16,11 +16,8 @@
 #   gem: sensu-plugin
 #
 # USAGE:
-#   check-container-services.rb c92d402a5d14
+#   check-container-services.rb -c /path/docker-compose.yaml
 #   CheckContainerServices OK
-#
-#   check-container-services.rb circle_burglar
-#   CheckContainerServices CRITICAL: circle_burglar is not running on the host
 #
 # NOTES:
 #     => State.running == true   -> OK
@@ -30,7 +27,8 @@
 #     => Other exception         -> WARNING
 #
 # LICENSE:
-#   Copyright 2014 Sonian, Inc. and contributors. <support@sensuapp.org>
+#   Copyright 2017 Roberto Scudeller. Github @betorvs
+#   Fork from check-container.rb but with some special needs
 #   Released under the same terms as Sensu (the MIT license); see LICENSE
 #   for details.
 #
@@ -60,42 +58,36 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
          required: true
 
   def run
-    client = create_docker_client
-    services = list_services
+    warning "File #{config[:compose]} not found" unless File.exists?(config[:compose])
+    check_node_manager("#{Socket.gethostname}")
+    services = JSON.parse(list_services)
     status_check = 0
-    services.each do |service|
-      containers = list_containers(service)
-      target = list_replicas(service)
-        containers_size=0
-        containers.each do |container|
-          path = "/containers/#{container}/json"
-          req = Net::HTTP::Get.new path
+    services['data'].each do |service|
+      service_id = list_tasks(service['id'])
+      service_name = service['name']
+      target = list_replicas(service_name)
+        tasks_up=0
+        service_id.each do |tasks|
+          path = "tasks/#{tasks}"
           begin
-            response = client.request(req)
-            if response.body.include? 'no such id'
-              puts "#{container} is not running on #{config[:docker_host]}"
+            response = docker_api(path)
+            task_state = response['Status']['State']
+            if task_state == "running"
+              #puts "#{tasks} is running"
+	      tasks_up = tasks_up + 1
+            #else
+	    #  remove because 
+            #  puts "WARNING: #{service_name} : #{tasks} is #{task_state} on #{tasks['NodeID']}."
             end
-      
-            container_state = JSON.parse(response.body)['State']['Running']
-            if container_state == true
-              #puts "#{container} is running on #{config[:docker_host]}."
-	      containers_size = containers_size + 1
-            else
-              puts "#{container} is #{container_state} on #{config[:docker_host]}."
-            end
-          rescue JSON::ParserError => e
-            critical "JSON Error: #{e.inspect}"
-          rescue => e
-            warning "Error: #{e.inspect}"
           end
 	end
-	if containers_size == 0
-	  puts "CRITICAL: #{service} with containers #{target} = #{containers_size}"
+	if tasks_up == 0
+	  #puts "CRITICAL: #{service_name} with container #{target} = #{tasks_up}"
 	  status = 2
-	#elsif containers_size >= 1
-	#  puts "WARNING: #{service} with containers #{target} = #{containers_size}"
+	#elsif tasks_up >= 1
+	#  puts "WARNING: #{service_name} with containers #{target} = #{tasks_up}"
 	else
-          #puts "OK: #{service} with containers #{target} = #{containers_size}"
+          #puts "OK: #{service_name} with container #{target} = #{tasks_up}"
 	  status = 0
 	end
       if status > status_check
@@ -104,7 +96,7 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
       status_check
     end
     if status_check == 2
-      critical 
+      critical
     else
       ok
     end
@@ -126,14 +118,25 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
       end
     end
   end
-  def list_services
-    list = []
-    path = 'services'
-    @services = docker_api(path)
-    @services.each do |service|
-      list << service['Spec']['Name']
+  def check_node_manager(hostname)
+    path = 'nodes'
+    @nodes = docker_api(path)
+    @nodes.each do |host|
+      if host['Description']['Hostname'] == "#{hostname}"
+        if host['Spec']['Role'] == "worker"
+          warning "worker node found"
+	end
+      end
     end
-    list
+  end
+
+  def list_services
+    path = 'services'
+    services = docker_api(path)
+    list = services.map do |service|
+      { :name => service['Spec']['Name'], :id  => service['ID'] }
+    end
+    JSON[{ 'data' => list}]
   end
   def list_replicas(service)
     list = []
@@ -149,18 +152,18 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
     end 
     list
   end
-  def list_containers(service)
-    list = []
-    path = 'containers/json'
-    @containers = docker_api(path)
-    
-    @containers.each do |container|
-      expression = service
-      found = container['Names']
+  def list_tasks(service)
+    id_name = []
+    path = 'tasks'
+    expression = service
+    tasks = docker_api(path)
+    tasks.each do |service_ids|
+      found = service_ids['ServiceID']
       if found.to_s.include? expression
-        list << container['Names'][0].gsub('/', '')
+        id_name << service_ids['ID']
       end
+    ##puts "#{list} #{id_name}"
     end
-    list
+    id_name
   end
 end

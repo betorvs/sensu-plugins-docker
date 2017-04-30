@@ -23,7 +23,8 @@
 # NOTES:
 #
 # LICENSE:
-#   Copyright 2015 Paul Czarkowski. Github @paulczar
+#   Copyright 2017 Roberto Scudeller. Github @betorvs
+#   Fork from metrics-docker-stats.rb but with some special needs
 #   Released under the same terms as Sensu (the MIT license); see LICENSE
 #   for details.
 #
@@ -46,7 +47,7 @@ class Hash
   end
 end
 
-class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
+class MetricsContainerServices < Sensu::Plugin::Metric::CLI::Graphite
   option :scheme,
          description: 'Metric naming scheme, text to prepend to metric',
          short: '-s SCHEME',
@@ -57,8 +58,7 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
          description: 'location of docker api, host:port or /path/to/docker.sock',
          short: '-H DOCKER_HOST',
          long: '--docker-host DOCKER_HOST',
-         default: '/var/run/docker.sock',
-         proc: proc { |v|  v.gsub('tcp://', '').gsub('unix://', '') }
+         default: '/var/run/docker.sock'
 
   option :docker_protocol,
          description: 'http or unix',
@@ -83,57 +83,32 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
     dotted_stats = Hash.to_dotted_hash stats
     dotted_stats.each do |key, value|
       next if key == 'read' # unecessary timestamp
-      next if key.start_with? 'blkio_stats' # array values, figure out later
+      next if value.is_a?(Array)
       output "#{config[:scheme]}.#{container}.#{key}", value, @timestamp
     end
   end
 
-  def docker_api(path, full_body = false)
+  def docker_api(path)
     if config[:docker_protocol] == 'unix'
+      session = NetX::HTTPUnix.new("unix://#{config[:docker_host]}")
       request = Net::HTTP::Get.new "/#{path}"
-      NetX::HTTPUnix.start("unix://#{config[:docker_host]}") do |http|
-        get_response(full_body, http, request)
-      end
     else
       uri = URI("#{config[:docker_protocol]}://#{config[:docker_host]}/#{path}")
+      session = Net::HTTP.new(uri.host, uri.port)
       request = Net::HTTP::Get.new uri.request_uri
-      Net::HTTP.start(uri.host, uri.port) do |http|
-        get_response(full_body, http, request)
+    end
+    session.start do |http|
+      http.request request do |response|
+        response.value
+        return JSON.parse(response.read_body)
       end
     end
   end
 
-  def get_response(full_body, http, request)
-    if full_body
-      get_full_response(http, request)
-    else
-      get_single_chunk(http, request)
-    end
-  end
-
-  def get_full_response(http, request)
-    http.request request do |response|
-      @response = JSON.parse(response.read_body)
-    end
-    http.finish
-    @response
-  end
-
-  def get_single_chunk(http, request)
-    http.request request do |response|
-      response.read_body do |chunk|
-        @response = JSON.parse(chunk)
-        http.finish
-      end
-    end
-    rescue NoMethodError
-      # using http.finish to prematurely kill the stream causes this exception.
-      return @response
-  end
   def list_services
     list = []
     path = 'services'
-    @services = docker_api(path, true)
+    @services = docker_api(path)
     @services.each do |service|
       list << service['Spec']['Name']
     end
@@ -143,8 +118,7 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
   def list_containers(service)
     list = []
     path = 'containers/json'
-    @containers = docker_api(path, true)
-
+    @containers = docker_api(path)
     @containers.each do |container|
       expression = service
       found = container['Names']
@@ -152,11 +126,15 @@ class DockerStatsMetrics < Sensu::Plugin::Metric::CLI::Graphite
         list << container['Names'][0].gsub('/', '')
       end
     end
-    list
+    if list.empty?
+      warning
+    else
+      list
+    end
   end
 
   def container_stats(container)
-    path = "containers/#{container}/stats"
+    path = "containers/#{container}/stats?stream=0"
     @stats = docker_api(path)
   end
 end
