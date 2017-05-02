@@ -15,11 +15,8 @@
 # DEPENDENCIES:
 #   gem: sensu-plugin
 #
-# USAGE:
-#   check-containers-docker.rb c92d402a5d14
-#   CheckContainersDocker OK
-#
-#   check-containers-docker.rb circle_burglar
+# USAGE (container name with some version in name or randon numeric names, like circle_bugler.0.2-3 or circle_burglar.1.12334as445gs21):
+#   check-containers-docker.rb -e circle_burglar
 #   CheckContainersDocker CRITICAL: circle_burglar is not running on the host
 #
 # NOTES:
@@ -49,10 +46,6 @@ class CheckContainersDocker < Sensu::Plugin::Check::CLI
          long: '--host DOCKER_HOST',
          description: 'Docker socket to connect. TCP: "host:port" or Unix: "/path/to/docker.sock" (default: "/var/run/docker.sock")',
          default: '/var/run/docker.sock'
-  option :container,
-         short: '-c CONTAINER',
-         long: '--container CONTAINER',
-         default: ''
   option :expression,
          short: '-e CONTAINER',
          long: '--expression CONTAINER',
@@ -71,11 +64,7 @@ class CheckContainersDocker < Sensu::Plugin::Check::CLI
 
   def run
     client = create_docker_client
-    if config[:container] != ''
-      list = [config[:container]]
-    else
-      list = list_containers
-    end
+    list = list_containers
     list.each do |container|
       path = "/containers/#{container}/json"
       req = Net::HTTP::Get.new path

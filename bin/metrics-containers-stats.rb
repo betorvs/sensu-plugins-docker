@@ -63,12 +63,6 @@ class MetricsContainerStats < Sensu::Plugin::Metric::CLI::Graphite
          long: '--scheme SCHEME',
          default: "#{Socket.gethostname}.docker"
 
-  option :container,
-         description: 'Name of container to collect metrics for',
-         short: '-c CONTAINER',
-         long: '--container CONTAINER',
-         default: ''
-
   option :docker_host,
          description: 'Docker socket to connect. TCP: "host:port" or Unix: "/path/to/docker.sock" (default: "127.0.0.1:2375")',
          short: '-H DOCKER_HOST',
@@ -96,11 +90,7 @@ class MetricsContainerStats < Sensu::Plugin::Metric::CLI::Graphite
   def run
     @timestamp = Time.now.to_i
 
-    if config[:container] != ''
-      list = [config[:container]]
-    else
-      list = list_containers
-    end
+    list = list_containers
     list.each do |container|
       stats = container_stats(container)
       output_stats(container, stats)

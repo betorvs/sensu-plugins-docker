@@ -44,12 +44,6 @@ class CheckContainersLogs < Sensu::Plugin::Check::CLI
          long: '--docker-host DOCKER_HOST',
          default: '/var/run/docker.sock'
 
-  option :container,
-         description: 'name of container',
-         short: '-n CONTAINER',
-         long: '--container-name CONTAINER',
-         default: ''
-
   option :red_flags,
          description: 'substring whose presence (case-insensitive by default) in a log line indicates an error; can be used multiple t
 imes',
@@ -98,7 +92,7 @@ insensitive',
 
   option :friendly_names,
          description: 'use friendly name if available',
-         short: '-N',
+         short: '-n',
          long: '--names',
          boolean: true,
          default: false
@@ -195,11 +189,7 @@ insensitive',
 
 
   def run
-    if config[:container] != ''
-      list = [config[:container]]
-    else
-      list = list_containers
-    end
+    list = list_containers
     list.each do |container|
       process_docker_logs(container) do |log_chunk|
         problem = detect_problem log_chunk
