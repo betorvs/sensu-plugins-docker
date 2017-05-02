@@ -58,10 +58,11 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
          required: true
 
   def run
-    warning "File #{config[:compose]} not found" unless File.exists?(config[:compose])
     check_node_manager("#{Socket.gethostname}")
+    warning "File #{config[:compose]} not found" unless File.exists?(config[:compose])
     services = JSON.parse(list_services)
     status_check = 0
+    result = ""
     services['data'].each do |service|
       service_id = list_tasks(service['id'])
       service_name = service['name']
@@ -72,22 +73,23 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
           begin
             response = docker_api(path)
             task_state = response['Status']['State']
+            task_node = get_node_hostname(response['NodeID'])
             if task_state == "running"
-              #puts "#{tasks} is running"
+              ##result << "OK #{service_name} : #{tasks} is #{task_state} on #{task_node}.\n"
 	      tasks_up = tasks_up + 1
-            #else
+            else
 	    #  remove because 
-            #  puts "WARNING: #{service_name} : #{tasks} is #{task_state} on #{tasks['NodeID']}."
+             result << "WARNING #{service_name} : #{tasks} is #{task_state} on #{task_node}.\n"
             end
           end
 	end
 	if tasks_up == 0
-	  #puts "CRITICAL: #{service_name} with container #{target} = #{tasks_up}"
+	  result << "CRITICAL: #{service_name} with container #{target} = #{tasks_up} .\n"
 	  status = 2
 	#elsif tasks_up >= 1
-	#  puts "WARNING: #{service_name} with containers #{target} = #{tasks_up}"
+	#  result << "WARNING: #{service_name} with containers #{target} = #{tasks_up}"
 	else
-          #puts "OK: #{service_name} with container #{target} = #{tasks_up}"
+          #result << "OK: #{service_name} with container #{target} = #{tasks_up}"
 	  status = 0
 	end
       if status > status_check
@@ -96,8 +98,10 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
       status_check
     end
     if status_check == 2
+      puts result
       critical
     else
+      #puts result
       ok
     end
   end
@@ -113,7 +117,7 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
 
     session.start do |http|
       http.request request do |response|
-        response.value
+        response.code if response.code != "200"
         return JSON.parse(response.read_body)
       end
     end
@@ -122,14 +126,16 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
     path = 'nodes'
     @nodes = docker_api(path)
     @nodes.each do |host|
-      if host['Description']['Hostname'] == "#{hostname}"
-        if host['Spec']['Role'] == "worker"
-          warning "worker node found"
-	end
+      if host.to_s.include? "This node is not a swarm manager"
+        ok "WORKER node found. Please, verify the Docker Swarm Node Manager if the services is running."
       end
     end
   end
-
+  def get_node_hostname(id)
+    path = "nodes/#{id}"
+    nodes = docker_api(path)
+    node = nodes['Description']['Hostname']
+  end
   def list_services
     path = 'services'
     services = docker_api(path)
