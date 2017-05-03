@@ -66,6 +66,7 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
     services['data'].each do |service|
       service_id = list_tasks(service['id'])
       service_name = service['name']
+      stack_name = service['stack']
       target = list_replicas(service_name)
         tasks_up=0
         service_id.each do |tasks|
@@ -75,21 +76,21 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
             task_state = response['Status']['State']
             task_node = get_node_hostname(response['NodeID'])
             if task_state == "running"
-              ##result << "OK #{service_name} : #{tasks} is #{task_state} on #{task_node}.\n"
+              #result << "OK Stack: #{stack_name} , Service: #{service_name} => #{tasks} is #{task_state} on #{task_node}.\n"
 	      tasks_up = tasks_up + 1
             else
 	    #  remove because 
-             result << "WARNING #{service_name} : #{tasks} is #{task_state} on #{task_node}.\n"
+             result << "WARNING Stack: #{stack_name} , Service #{service_name} => #{tasks} is #{task_state} on #{task_node}.\n"
             end
           end
 	end
 	if tasks_up == 0
-	  result << "CRITICAL: #{service_name} with container #{target} = #{tasks_up} .\n"
+	  result << "CRITICAL Stack: #{stack_name} , Service: #{service_name} with container #{target} = #{tasks_up} .\n"
 	  status = 2
 	#elsif tasks_up >= 1
-	#  result << "WARNING: #{service_name} with containers #{target} = #{tasks_up}"
+	#  result << "WARNING Stack: #{stack_name}, Service: #{service_name} with containers #{target} = #{tasks_up}"
 	else
-          #result << "OK: #{service_name} with container #{target} = #{tasks_up}"
+          #result << "OK: Stack: #{stack_name} , Service #{service_name} with container #{target} = #{tasks_up}"
 	  status = 0
 	end
       if status > status_check
@@ -140,7 +141,7 @@ class CheckContainerServices < Sensu::Plugin::Check::CLI
     path = 'services'
     services = docker_api(path)
     list = services.map do |service|
-      { :name => service['Spec']['Name'], :id  => service['ID'] }
+      { :name => service['Spec']['Name'], :id  => service['ID'], :stack => service['Spec']['Labels']['com.docker.stack.namespace'] }
     end
     JSON[{ 'data' => list}]
   end
